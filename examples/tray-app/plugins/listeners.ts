@@ -7,7 +7,7 @@ class eventlisteners implements IPlugin {
     name: "listeners",
     version: "1.0.0",
     emits: ["system"] as const,
-    listens: ["tiktok", "agent"] as const,
+    listens: ["tiktok", "agent", "memory", "context"] as const,
   };
 
   setup(_ctx: PluginContext): void {}
@@ -17,7 +17,6 @@ class eventlisteners implements IPlugin {
     const agent = ctx.getPlugin<AgentPluginType>("ai-agent");
 
     if (bus) {
-      // TikTok chat events — raw log
       bus.onPlatform("tiktok", (e) => {
         if (e.eventName === "chat") {
           const data = e.data;
@@ -27,7 +26,6 @@ class eventlisteners implements IPlugin {
         }
       });
 
-      // Agent response events — generated responses
       bus.onPlatform("agent", (e) => {
         if (e.eventName === "response") {
           const data = e.data;
@@ -38,15 +36,6 @@ class eventlisteners implements IPlugin {
         }
       });
 
-      // Log agent stats periodically
-      if (agent) {
-        setInterval(() => {
-          const stats = agent.getStats();
-          console.log(
-            `[listeners][agent-stats] total: ${stats.totalComments} | filtered: ${stats.filteredComments} | responses: ${stats.responsesGenerated} | errors: ${stats.errors}`,
-          );
-        }, 30_000);
-      }
     }
   }
 
