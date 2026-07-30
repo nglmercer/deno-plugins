@@ -172,6 +172,15 @@ async function main(): Promise<void> {
         console.log(`[connect] ${event.platform} connected`);
       },
     );
+
+    // 9. VM scripts round-trip: gift-counter.js re-emits "gift-summary"
+    bus.on(
+      (e) => e.platform === "system" && e.eventName === "gift-summary",
+      (event) => {
+        const { platform, total } = event.data as { platform: string; total: number };
+        console.log(`[vm-scripts] gift summary → ${platform}: ${total} total`);
+      },
+    );
   }
 
    // Bridge legacy event-emitter → event-bus

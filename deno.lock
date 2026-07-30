@@ -2,7 +2,6 @@
   "version": "5",
   "specifiers": {
     "npm:@types/node@20": "20.19.43",
-    "npm:@xsai/generate-text@0.5.0-beta.7": "0.5.0-beta.7",
     "npm:tsup@^8.1.0": "8.5.1_typescript@5.9.3",
     "npm:typescript@^5.7.3": "5.9.3"
   },
@@ -290,22 +289,6 @@
       "dependencies": [
         "undici-types"
       ]
-    },
-    "@xsai/generate-text@0.5.0-beta.7": {
-      "integrity": "sha512-89SEqc9q8okHyOISwXz3IZ4wp29Sf639Tq9Vts27brM4FxVom3phT7Y7g+HJl1VvAs7WApw7lDnKNnW18BuUqQ==",
-      "dependencies": [
-        "@xsai/shared",
-        "@xsai/shared-chat"
-      ]
-    },
-    "@xsai/shared-chat@0.5.0-beta.7": {
-      "integrity": "sha512-Xzq9qhQKbnVhdTjdNKygCsH60jSMkUfUEdFN7CNT61e4LRzSL2IfrU9IJnK0cDFaVEBuaDrd53tUzdbEO4jwiQ==",
-      "dependencies": [
-        "@xsai/shared"
-      ]
-    },
-    "@xsai/shared@0.5.0-beta.7": {
-      "integrity": "sha512-w2nplQtguUWmLRobtQJS7rwWW8FvU7Bb7jrHsQGJ7KbpTQV9vjYQwY9+owdrUGmTpXg/D/JiaEvSkpKYMHY3nw=="
     },
     "acorn@8.17.0": {
       "integrity": "sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==",
@@ -598,7 +581,6 @@
     "packageJson": {
       "dependencies": [
         "npm:@types/node@20",
-        "npm:@xsai/generate-text@0.5.0-beta.7",
         "npm:tsup@^8.1.0",
         "npm:typescript@^5.7.3"
       ]

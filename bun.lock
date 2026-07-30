@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "@deno/plugin-system",
+      "dependencies": {
+        "napi-vm": "^0.1.0",
+      },
       "devDependencies": {
         "@types/node": "^20",
         "tsup": "^8.1.0",
@@ -167,6 +170,8 @@
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
 
     "mz": ["mz@2.7.0", "", { "dependencies": { "any-promise": "^1.0.0", "object-assign": "^4.0.1", "thenify-all": "^1.0.0" } }, "sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q=="],
+
+    "napi-vm": ["napi-vm@0.1.0", "", {}, "sha512-s0/soe9wE5+7SK07+dAkDAYMHyOgJsplgUnN5Qu6Z4/jn2pCPPQb//4Hq/dLNiPdAB2n9JXYDO8QNuP5lihcKg=="],
 
     "object-assign": ["object-assign@4.1.1", "", {}, "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg=="],
 
