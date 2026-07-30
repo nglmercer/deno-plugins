@@ -240,40 +240,52 @@ class TikTokWebSocket {
       logger: options.logger ?? console.log
     };
   }
+  openResolve = null;
   connect() {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.options.logger(LOG_MESSAGES.WEBSOCKET.ALREADY_OPEN);
-      return;
+      return Promise.resolve();
     }
     this.isManuallyClosed = false;
     this.options.logger(LOG_MESSAGES.WEBSOCKET.CONNECTING(this.reconnectAttempts + 1));
-    this.socket = new WebSocket(`${TIKTOK_CONSTANTS.WEBSOCKET_URL}${TIKTOK_CONSTANTS.WEBSOCKET_PARAMS}`);
-    this.socket.onopen = () => {
-      this.options.logger(LOG_MESSAGES.WEBSOCKET.OPEN);
-      this.reconnectAttempts = 0;
-    };
-    this.socket.onmessage = (event) => {
-      this.emitter?.(event.data);
-      const dataStr = String(event.data);
-      if (dataStr === TIKTOK_CONSTANTS.PING_MESSAGE) {
-        this.socket?.send(TIKTOK_CONSTANTS.PONG_MESSAGE);
-      } else if (dataStr.startsWith("0{")) {
-        this.socket?.send(this.iomsg);
-      } else if (dataStr.startsWith("40")) {
-        this.socket?.send(this.payload);
-        this.options.logger(LOG_MESSAGES.WEBSOCKET.PAYLOAD_SENT);
-      }
-    };
-    this.socket.onerror = (error) => {
-      this.options.logger("wsError: " + JSON.stringify(error));
-    };
-    this.socket.onclose = (event) => {
-      this.options.logger("closed: " + JSON.stringify(event));
-      this.socket = null;
-      if (!this.isManuallyClosed && this.options.reconnect) {
-        this.scheduleReconnect();
-      }
-    };
+    return new Promise((resolve2) => {
+      this.openResolve = resolve2;
+      this.socket = new WebSocket(`${TIKTOK_CONSTANTS.WEBSOCKET_URL}${TIKTOK_CONSTANTS.WEBSOCKET_PARAMS}`);
+      this.socket.onopen = () => {
+        this.options.logger(LOG_MESSAGES.WEBSOCKET.OPEN);
+        this.reconnectAttempts = 0;
+        if (this.openResolve) {
+          this.openResolve();
+          this.openResolve = null;
+        }
+      };
+      this.socket.onmessage = (event) => {
+        this.emitter?.(event.data);
+        const dataStr = String(event.data);
+        if (dataStr === TIKTOK_CONSTANTS.PING_MESSAGE) {
+          this.socket?.send(TIKTOK_CONSTANTS.PONG_MESSAGE);
+        } else if (dataStr.startsWith("0{")) {
+          this.socket?.send(this.iomsg);
+        } else if (dataStr.startsWith("40")) {
+          this.socket?.send(this.payload);
+          this.options.logger(LOG_MESSAGES.WEBSOCKET.PAYLOAD_SENT);
+        }
+      };
+      this.socket.onerror = (error) => {
+        this.options.logger("wsError: " + JSON.stringify(error));
+      };
+      this.socket.onclose = (event) => {
+        this.options.logger("closed: " + JSON.stringify(event));
+        this.socket = null;
+        if (this.openResolve) {
+          this.openResolve();
+          this.openResolve = null;
+        }
+        if (!this.isManuallyClosed && this.options.reconnect) {
+          this.scheduleReconnect();
+        }
+      };
+    });
   }
   scheduleReconnect() {
     if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
@@ -318,7 +330,7 @@ class TikTokWebSocket {
 }
 async function connect(payload, emitter, options) {
   const ws = new TikTokWebSocket(payload, emitter, options);
-  ws.connect();
+  await ws.connect();
   return ws;
 }
 
@@ -371,6 +383,9 @@ class TikFinityClient extends EventEmitter {
   currentPayload = null;
   options = {};
   logger = console.log;
+  connectionResolve = null;
+  connectPromise = null;
+  killingProcess = null;
   constructor(options = {}) {
     super();
     this.options = options;
@@ -380,10 +395,32 @@ class TikFinityClient extends EventEmitter {
       this.logger = (msg, ...args) => console.log(`[TikFinity]`, msg, ...args);
     }
   }
+  waitForConnection(timeoutMs = 60000) {
+    if (this.wsConnection?.isConnected())
+      return Promise.resolve();
+    return new Promise((resolve2, reject) => {
+      this.connectionResolve = resolve2;
+      const timer = setTimeout(() => {
+        this.connectionResolve = null;
+        reject(new Error("Timed out waiting for WebSocket connection"));
+      }, timeoutMs);
+      const original = this.connectionResolve;
+      this.connectionResolve = () => {
+        clearTimeout(timer);
+        original();
+      };
+    });
+  }
   async connect(options) {
-    if (this.webviewProcess) {
+    if (this.webviewProcess && this.wsConnection?.isConnected()) {
       this.logger(LOG_MESSAGES.WEBVIEW.STARTED);
       return;
+    }
+    if (this.webviewProcess) {
+      return this.waitForConnection();
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
     }
     if (options) {
       this.options = { ...this.options, ...options };
@@ -393,70 +430,105 @@ class TikFinityClient extends EventEmitter {
         this.logger = (msg, ...args) => console.log(`[TikFinity]`, msg, ...args);
       }
     }
+    this.connectPromise = this.spawnWebview();
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+  async spawnWebview() {
+    if (this.killingProcess) {
+      await new Promise((resolve2) => {
+        const proc2 = this.killingProcess;
+        if (!proc2 || proc2.exitCode !== null) {
+          resolve2();
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            proc2.kill("SIGKILL");
+          } catch (_) {}
+          resolve2();
+        }, 3000);
+        proc2.on("exit", () => {
+          clearTimeout(timer);
+          resolve2();
+        });
+      });
+      this.killingProcess = null;
+    }
+    if (this.webviewProcess) {
+      return this.waitForConnection();
+    }
     this.logger(LOG_MESSAGES.WEBVIEW.STARTED);
     const webviewScriptPath = await getWebviewScriptPath();
     this.logger(`Using webview script: ${webviewScriptPath}`);
     const runtime = getRuntimeCommand(webviewScriptPath);
-    this.webviewProcess = spawn(runtime.cmd, runtime.args, {
+    const proc = spawn(runtime.cmd, runtime.args, {
       stdio: ["pipe", "pipe", "pipe"],
       detached: false,
-      env: {
-        ...process.env
+      env: { ...process.env }
+    });
+    this.webviewProcess = proc;
+    proc.stdout?.on("data", (data) => {
+      const output = data.toString();
+      if (output.includes(TIKTOK_CONSTANTS.PAYLOAD_PREFIX)) {
+        const lines = output.split(`
+`);
+        let payload = "";
+        for (const line of lines) {
+          if (line.includes(TIKTOK_CONSTANTS.PAYLOAD_PREFIX)) {
+            payload = line.split(TIKTOK_CONSTANTS.PAYLOAD_PREFIX)[1].trim();
+          } else if (line.trim()) {
+            this.logger(TIKTOK_CONSTANTS.EVENT_MESSAGE, line.trim());
+          }
+        }
+        if (!payload || this.currentPayload === payload) {
+          return;
+        }
+        this.currentPayload = payload;
+        this.emit(TIKFINITY_EVENTS.PAYLOAD, payload);
+        if (this.wsConnection) {
+          this.logger(LOG_MESSAGES.TIKFINITY.CLOSING_FOR_PAYLOAD);
+          this.wsConnection.disconnect();
+          this.wsConnection = null;
+        }
+        connect(payload, (message) => {
+          this.handleMessage(message);
+        }, {
+          reconnect: this.options.autoReconnect ?? true,
+          maxReconnectAttempts: this.options.maxReconnectAttempts,
+          reconnectDelay: this.options.reconnectDelay,
+          maxReconnectDelay: this.options.maxReconnectDelay,
+          logger: this.logger
+        }).then((ws) => {
+          this.wsConnection = ws;
+          if (this.connectionResolve) {
+            this.connectionResolve();
+            this.connectionResolve = null;
+          }
+        });
+      } else {
+        this.logger(TIKTOK_CONSTANTS.EVENT_MESSAGE, output.trim());
       }
     });
-    if (this.webviewProcess.stdout) {
-      this.webviewProcess.stdout.on("data", (data) => {
-        const output = data.toString();
-        if (output.includes(TIKTOK_CONSTANTS.PAYLOAD_PREFIX)) {
-          const lines = output.split(`
-`);
-          let payload = "";
-          for (const line of lines) {
-            if (line.includes(TIKTOK_CONSTANTS.PAYLOAD_PREFIX)) {
-              payload = line.split(TIKTOK_CONSTANTS.PAYLOAD_PREFIX)[1].trim();
-            } else if (line.trim()) {
-              this.logger(TIKTOK_CONSTANTS.EVENT_MESSAGE, line.trim());
-            }
-          }
-          if (!payload || this.currentPayload === payload) {
-            return;
-          }
-          this.currentPayload = payload;
-          this.emit(TIKFINITY_EVENTS.PAYLOAD, payload);
-          if (this.wsConnection) {
-            console.log(LOG_MESSAGES.TIKFINITY.CLOSING_FOR_PAYLOAD);
-            this.wsConnection.disconnect();
-            this.wsConnection = null;
-          }
-          connect(payload, (message) => {
-            this.handleMessage(message);
-          }, {
-            reconnect: this.options.autoReconnect ?? true,
-            maxReconnectAttempts: this.options.maxReconnectAttempts,
-            reconnectDelay: this.options.reconnectDelay,
-            maxReconnectDelay: this.options.maxReconnectDelay,
-            logger: this.logger
-          }).then((ws) => {
-            this.wsConnection = ws;
-          });
-        } else {
-          this.logger(TIKTOK_CONSTANTS.EVENT_MESSAGE, output.trim());
-        }
-      });
-    }
-    if (this.webviewProcess.stderr) {
-      this.webviewProcess.stderr.on("data", (data) => {
-        console.error(LOG_MESSAGES.WEBVIEW.ERROR, data.toString());
-      });
-    }
-    this.webviewProcess.on("close", (code) => {
+    proc.stderr?.on("data", (data) => {
+      console.error(LOG_MESSAGES.WEBVIEW.ERROR, data.toString());
+    });
+    proc.on("close", (code) => {
       this.logger(LOG_MESSAGES.WEBVIEW.CLOSED, code);
-      this.webviewProcess = null;
+      if (this.webviewProcess === proc) {
+        this.webviewProcess = null;
+      }
     });
-    this.webviewProcess.on("error", (error) => {
+    proc.on("error", (error) => {
       console.error(LOG_MESSAGES.WEBVIEW.ERROR, error);
-      this.webviewProcess = null;
+      if (this.webviewProcess === proc) {
+        this.webviewProcess = null;
+      }
     });
+    return this.waitForConnection();
   }
   handleMessage(message) {
     const info = SocketIoMessage(message);
@@ -488,9 +560,10 @@ class TikFinityClient extends EventEmitter {
   clean() {
     this.disconnect();
     if (this.webviewProcess) {
-      console.log(LOG_MESSAGES.WEBVIEW.CLOSING);
+      this.logger(LOG_MESSAGES.WEBVIEW.CLOSING);
       const proc = this.webviewProcess;
       this.webviewProcess = null;
+      this.killingProcess = proc;
       try {
         if (proc.stdin && !proc.stdin.destroyed) {
           proc.stdin.write(`TikFinity_EXIT
@@ -498,6 +571,7 @@ class TikFinityClient extends EventEmitter {
         }
       } catch (e) {
         proc.kill("SIGKILL");
+        this.killingProcess = null;
         this.currentPayload = null;
         this.removeAllListeners();
         return;
@@ -509,6 +583,9 @@ class TikFinityClient extends EventEmitter {
       }, 2000);
       proc.on("exit", () => {
         clearTimeout(killTimeout);
+        if (this.killingProcess === proc) {
+          this.killingProcess = null;
+        }
       });
     }
     this.currentPayload = null;
@@ -521,19 +598,18 @@ class TikFinityClient extends EventEmitter {
   }
   async reinitialize() {
     if (this.currentPayload) {
-      console.log(LOG_MESSAGES.TIKFINITY.RECONNECTING_EXISTING);
-      connect(this.currentPayload, (message) => {
+      this.logger(LOG_MESSAGES.TIKFINITY.RECONNECTING_EXISTING);
+      const ws = await connect(this.currentPayload, (message) => {
         this.handleMessage(message);
-      }).then((ws) => {
-        this.wsConnection = ws;
       });
+      this.wsConnection = ws;
     } else {
-      console.log(LOG_MESSAGES.TIKFINITY.RECONNECTING_FRESH);
+      this.logger(LOG_MESSAGES.TIKFINITY.RECONNECTING_FRESH);
       await this.connect();
     }
   }
   reconnect() {
-    console.log(LOG_MESSAGES.TIKFINITY.RECONNECTING);
+    this.logger(LOG_MESSAGES.TIKFINITY.RECONNECTING);
     this.disconnect();
     if (this.currentPayload) {
       connect(this.currentPayload, (message) => {
@@ -568,7 +644,6 @@ class TikfinityPlugin {
   };
   async onLoad(context) {
     const info = console.log;
-    console.log("load")
     info(LOG_MESSAGES.PLUGIN.LOADING);
     eventHandler = (payload) => {
       const emitter = context.getPlugin("event-emitter");
@@ -632,8 +707,7 @@ function isMainModule() {
 }
 if (isMainModule()) {
   const defaultTimes = {
-    reconnect: 30000,
-    disconnect: 1e4
+    reconnect: 30000
   };
   const customClient = new TikFinityClient({
     autoReconnect: true,
