@@ -9,3 +9,4 @@ function handleChat(event) {
   var msg  = event.data.comment || event.data.message || "";
   log("[" + event.platform + "] " + user + ": " + msg);
 }
+//console.log("handleChat", typeof handleChat, typeof on);

@@ -60,6 +60,7 @@ class VmScriptsPlugin implements IPlugin {
   }
 
   onDisable(): void {
+    this.stopWatching();
     this.teardown();
   }
 
@@ -112,6 +113,7 @@ class VmScriptsPlugin implements IPlugin {
 
     // on(pattern, handlerName) → register a VM function as a listener
     vm.exposeFunction("on", (pattern: string, handlerName: string) => {
+      console.log(`on(${pattern}, ${handlerName})`);
       this.listeners.push({ pattern, handlerName });
       // If the VM is already running (hot-reload mid-session), subscribe immediately
       if (this.vm) this.subscribeOne(this.vm, { pattern, handlerName });
@@ -139,22 +141,14 @@ class VmScriptsPlugin implements IPlugin {
       const name = basename(file, ".js");
       const source = readFileSync(join(this.scriptsDir, file), "utf-8");
       try {
-        vm.registerModule(name, source);
+        // registerModule executes the source (top-level on(...) calls run here)
+        // and also makes the module importable by other scripts.
+        // Trailing "" suppresses napi-vm's REPL-style last-expression output.
+        console.log(`  [vm-scripts] loading: ${name}`);
+        vm.registerModule(name, source + '\n"";');
         console.log(`  [vm-scripts] loaded: ${name}`);
       } catch (err) {
         console.error(`  [vm-scripts] error loading ${name}:`, (err as Error).message);
-      }
-    }
-
-    // Bootstrap: import every module so top-level `on(...)` calls execute
-    if (files.length > 0) {
-      const imports = files
-        .map((f) => `import "${basename(f, ".js")}";`)
-        .join("\n");
-      try {
-        vm.run(imports);
-      } catch (err) {
-        console.error("[vm-scripts] bootstrap error:", (err as Error).message);
       }
     }
   }
@@ -179,13 +173,12 @@ class VmScriptsPlugin implements IPlugin {
     const filter = this.patternToFilter(pattern);
 
     const unsub = bus.on(filter, (event: RawEvent) => {
-      try {
-        vm.callFunction(handlerName, [
-          { platform: event.platform, eventName: event.eventName, data: event.data },
-        ]);
-      } catch (err) {
-        console.error(`[vm-scripts] handler "${handlerName}" error:`, (err as Error).message);
-      }
+      // runAsync keeps the Bun event loop free — callFunction would block it
+      const json = JSON.stringify({ platform: event.platform, eventName: event.eventName, data: event.data });
+      console.log(`[vm-scripts] ${handlerName}`);
+      void (vm.runAsync(`${handlerName}(${json});`) as Promise<unknown>).catch((err: Error) => {
+        console.error(`[vm-scripts] handler "${handlerName}" error:`, err.message);
+      });
     });
 
     this.unsubscribers.push(unsub);
@@ -201,6 +194,8 @@ class VmScriptsPlugin implements IPlugin {
     if (pattern === "*") return () => true;
     if (pattern.includes(":")) {
       const [platform, eventName] = pattern.split(":", 2);
+      if (platform === "*") return (e) => e.eventName === eventName;
+      if (eventName === "*") return (e) => e.platform === platform;
       return (e) => e.platform === platform && e.eventName === eventName;
     }
     return (e) => e.eventName === pattern;
@@ -209,6 +204,15 @@ class VmScriptsPlugin implements IPlugin {
   // -------------------------------------------------------------------------
   // Teardown & hot-reload
   // -------------------------------------------------------------------------
+
+  private stopWatching(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    this.watcher?.close();
+    this.watcher = null;
+  }
 
   private teardown(): void {
     for (const unsub of this.unsubscribers) unsub();
