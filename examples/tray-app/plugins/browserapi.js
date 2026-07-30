@@ -568,6 +568,7 @@ class TikfinityPlugin {
   };
   async onLoad(context) {
     const info = console.log;
+    console.log("load")
     info(LOG_MESSAGES.PLUGIN.LOADING);
     eventHandler = (payload) => {
       const emitter = context.getPlugin("event-emitter");

@@ -205,7 +205,15 @@ class EventBusPlugin implements IPlugin {
     const toRemove: HandlerEntry[] = [];
 
     for (const entry of matching) {
-      await entry.handler(event);
+      try {
+        await entry.handler(event);
+      } catch (err) {
+        // Isolate handler errors — one bad listener must not break the chain.
+        console.error(
+          `[event-bus] handler error on ${event.platform}:${event.eventName}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
       if (entry.once) toRemove.push(entry);
     }
 
