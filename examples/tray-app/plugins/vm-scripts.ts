@@ -24,6 +24,10 @@ interface ListenerEntry {
   handlerName: string;
 }
 
+type RuntimeSession = VmSession & {
+  observeHandler: (name: string, value: unknown) => boolean;
+};
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -32,13 +36,16 @@ class VmScriptsPlugin implements IPlugin {
   readonly metadata = { name: "vm-scripts", version: "1.1.0" };
 
   private vm: Vm | null = null;
-  private session: VmSession | null = null;
+  private session: RuntimeSession | null = null;
   private bus: EventBusPluginType | null = null;
   private scriptsDir = "";
   private listeners: ListenerEntry[] = [];
   private unsubscribers: Array<() => void> = [];
   private watcher: FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private reloadInFlight: Promise<void> | null = null;
+  private subscriptionsReady = false;
+  private subscriptionKeys = new Set<string>();
 
   /**
    * Guards against dispatching to a torn-down VM. Set false BEFORE
@@ -61,7 +68,7 @@ class VmScriptsPlugin implements IPlugin {
 
     const base = import.meta.dirname ?? process.cwd();
     this.scriptsDir = join(base, "..", "scripts");
-    this.session = new VmSession({ workspace: resolve(base, "..") });
+    this.session = new VmSession({ workspace: resolve(base, "..") }) as RuntimeSession;
     this.buildVm();
     this.watchScripts();
     console.log(`[vm-scripts] runtime session: ${this.session.runtimeFile}`);
@@ -81,9 +88,20 @@ class VmScriptsPlugin implements IPlugin {
   // -------------------------------------------------------------------------
 
   async reload(): Promise<void> {
-    await this.teardown();
-    this.buildVm();
-    console.log("[vm-scripts] reloaded");
+    if (this.reloadInFlight) return this.reloadInFlight;
+
+    const task = (async () => {
+      await this.teardown();
+      this.buildVm();
+      console.log("[vm-scripts] reloaded");
+    })();
+    this.reloadInFlight = task;
+
+    try {
+      await task;
+    } finally {
+      if (this.reloadInFlight === task) this.reloadInFlight = null;
+    }
   }
 
   loadedScripts(): string[] {
@@ -98,6 +116,8 @@ class VmScriptsPlugin implements IPlugin {
     const vm = new Vm();
     vm.setLoopLimit(10_000_000);
     this.alive = true;
+    this.subscriptionsReady = false;
+    this.subscriptionKeys.clear();
 
     this.vm = vm;
     this.session?.attach(vm);
@@ -105,6 +125,7 @@ class VmScriptsPlugin implements IPlugin {
     this.loadScripts(vm);
     this.session?.start();
     this.subscribeListeners();
+    this.subscriptionsReady = true;
   }
 
   /**
@@ -118,7 +139,7 @@ class VmScriptsPlugin implements IPlugin {
       const payload = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
       void bus.emit(platform, eventName, payload);
     };
-    this.session?.exposeFunction("emit", emit, {
+    this.session?.exposeFunction("emit", emit  as (...args: unknown[]) => unknown, {
       params: [
         { name: "platform", typeName: "string" },
         { name: "eventName", typeName: "string" },
@@ -130,11 +151,14 @@ class VmScriptsPlugin implements IPlugin {
     if (!this.session) vm.exposeFunction("emit", emit);
 
     const on = (pattern: string, handlerName: string) => {
-      this.listeners.push({ pattern, handlerName });
-      // If the VM is already assigned (hot-reload mid-session), subscribe now
-      if (this.vm) this.subscribeOne({ pattern, handlerName });
+      const entry = { pattern, handlerName };
+      const key = this.listenerKey(entry);
+      if (this.listeners.some((existing) => this.listenerKey(existing) === key)) return;
+      this.listeners.push(entry);
+      // Runtime registrations happen after initial script loading.
+      if (this.subscriptionsReady) this.subscribeOne(entry);
     };
-    this.session?.exposeFunction("on", on, {
+    this.session?.exposeFunction("on", on as (...args: unknown[]) => unknown, {
       params: [
         { name: "pattern", typeName: "string" },
         { name: "handlerName", typeName: "string" },
@@ -198,11 +222,17 @@ class VmScriptsPlugin implements IPlugin {
     const bus = this.bus;
     if (!bus) return;
 
+    const key = this.listenerKey(entry);
+    if (this.subscriptionKeys.has(key)) return;
+    this.subscriptionKeys.add(key);
+
     const { pattern, handlerName } = entry;
     const filter = this.patternToFilter(pattern);
 
     const unsub = bus.on(filter, (event: RawEvent) => {
       if (!this.alive || !this.vm) return;
+
+      this.session?.observeHandler(handlerName, event);
 
       const json = JSON.stringify({
         platform: event.platform,
@@ -229,6 +259,10 @@ class VmScriptsPlugin implements IPlugin {
     });
 
     this.unsubscribers.push(unsub);
+  }
+
+  private listenerKey(entry: ListenerEntry): string {
+    return `${entry.pattern}\u0000${entry.handlerName}`;
   }
 
   private patternToFilter(pattern: string): (e: RawEvent) => boolean {
@@ -258,10 +292,12 @@ class VmScriptsPlugin implements IPlugin {
   private async teardown(): Promise<void> {
     // 1. Mark dead — handlers check this and bail immediately.
     this.alive = false;
+    this.subscriptionsReady = false;
 
     // 2. Unsubscribe from the bus so no new events reach the handler.
     for (const unsub of this.unsubscribers) unsub();
     this.unsubscribers = [];
+    this.subscriptionKeys.clear();
     this.listeners = [];
 
     // 3. Destroy the VM. Safe immediately because vm.run() is synchronous —

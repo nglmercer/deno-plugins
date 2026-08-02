@@ -7,7 +7,7 @@ on("*:gift", "handleGift");
 
 function handleGift(event) {
   var platform = event.platform;
-  log("[gifts] " + platform + " total: ", event.data);
+  // log("[gifts] " + platform + " total: ", event.data);
 
   // Re-emit a summary event back to the host bus
   emit("system", "gift-summary", { platform: platform, total: totals[platform] });
