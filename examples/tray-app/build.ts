@@ -102,7 +102,7 @@ console.log(`  Binary: ${binaryPath} (${formatSize(binarySize)})`);
 // --- Step 2: Copy native .node addons ---
 console.log("\n[2/4] Copying native .node addons...");
 
-const napiPackages = ["tray-icon-node", "webview-napi"];
+const napiPackages = ["napi-vm", "tray-icon-node", "webview-napi"];
 const copiedNodeFiles: string[] = [];
 
 for (const pkg of napiPackages) {

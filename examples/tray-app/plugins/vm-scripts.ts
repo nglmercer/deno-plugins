@@ -1,8 +1,9 @@
 import type { IPlugin, PluginContext } from "../../../mod.ts";
 import type { EventBusPluginType, RawEvent } from "./event-bus.ts";
 import { Vm } from "napi-vm";
+import { VmSession } from "napi-vm/runtime/session.cjs";
 import { readFileSync, readdirSync, watch, type FSWatcher } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +32,7 @@ class VmScriptsPlugin implements IPlugin {
   readonly metadata = { name: "vm-scripts", version: "1.1.0" };
 
   private vm: Vm | null = null;
+  private session: VmSession | null = null;
   private bus: EventBusPluginType | null = null;
   private scriptsDir = "";
   private listeners: ListenerEntry[] = [];
@@ -59,8 +61,10 @@ class VmScriptsPlugin implements IPlugin {
 
     const base = import.meta.dirname ?? process.cwd();
     this.scriptsDir = join(base, "..", "scripts");
+    this.session = new VmSession({ workspace: resolve(base, "..") });
     this.buildVm();
     this.watchScripts();
+    console.log(`[vm-scripts] runtime session: ${this.session.runtimeFile}`);
   }
 
   onDisable(): void {
@@ -68,6 +72,8 @@ class VmScriptsPlugin implements IPlugin {
     // Fire-and-forget: onDisable is sync, but we start the async drain.
     // The alive=false guard prevents new dispatches immediately.
     void this.teardown();
+    this.session?.stop();
+    this.session = null;
   }
 
   // -------------------------------------------------------------------------
@@ -93,10 +99,11 @@ class VmScriptsPlugin implements IPlugin {
     vm.setLoopLimit(10_000_000);
     this.alive = true;
 
+    this.vm = vm;
+    this.session?.attach(vm);
     this.exposeBridge(vm);
     this.loadScripts(vm);
-
-    this.vm = vm;
+    this.session?.start();
     this.subscribeListeners();
   }
 
@@ -106,21 +113,46 @@ class VmScriptsPlugin implements IPlugin {
   private exposeBridge(vm: Vm): void {
     const bus = this.bus;
 
-    vm.exposeFunction("emit", (platform: string, eventName: string, data: unknown) => {
+    const emit = (platform: string, eventName: string, data: unknown) => {
       if (!bus || !this.alive) return;
       const payload = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
       void bus.emit(platform, eventName, payload);
+    };
+    this.session?.exposeFunction("emit", emit, {
+      params: [
+        { name: "platform", typeName: "string" },
+        { name: "eventName", typeName: "string" },
+        { name: "data", typeName: "object" },
+      ],
+      returns: "void",
+      documentation: "Emit an event on the host event bus.",
     });
+    if (!this.session) vm.exposeFunction("emit", emit);
 
-    vm.exposeFunction("on", (pattern: string, handlerName: string) => {
+    const on = (pattern: string, handlerName: string) => {
       this.listeners.push({ pattern, handlerName });
       // If the VM is already assigned (hot-reload mid-session), subscribe now
       if (this.vm) this.subscribeOne({ pattern, handlerName });
+    };
+    this.session?.exposeFunction("on", on, {
+      params: [
+        { name: "pattern", typeName: "string" },
+        { name: "handlerName", typeName: "string" },
+      ],
+      returns: "void",
+      documentation: "Subscribe a VM handler to host events.",
     });
+    if (!this.session) vm.exposeFunction("on", on);
 
-    vm.exposeFunction("log", (...args: unknown[]) => {
+    const log = (...args: unknown[]) => {
       console.log("[vm]", ...args);
+    };
+    this.session?.exposeFunction("log", log, {
+      params: [{ name: "args", typeName: "unknown[]" }],
+      returns: "void",
+      documentation: "Write a message to the host console.",
     });
+    if (!this.session) vm.exposeFunction("log", log);
   }
 
   private loadScripts(vm: Vm): void {
@@ -138,7 +170,12 @@ class VmScriptsPlugin implements IPlugin {
       const name = basename(file, ".js");
       const source = readFileSync(join(this.scriptsDir, file), "utf-8");
       try {
-        vm.registerModule(name, source + '\n"";');
+        const moduleSource = source + '\n"";';
+        if (this.session) {
+          this.session.registerModule(name, moduleSource);
+        } else {
+          vm.registerModule(name, moduleSource);
+        }
         console.log(`  [vm-scripts] loaded: ${name}`);
       } catch (err) {
         console.error(`  [vm-scripts] error loading ${name}:`, (err as Error).message);
@@ -231,11 +268,22 @@ class VmScriptsPlugin implements IPlugin {
     //    no in-flight threads to drain (unlike runAsync).
     if (this.vm) {
       for (const name of this.vm.listModules()) {
-        this.vm.removeModule(name);
+        if (this.session) {
+          this.session.removeModule(name);
+        } else {
+          this.vm.removeModule(name);
+        }
       }
-      this.vm.removeGlobal("emit");
-      this.vm.removeGlobal("on");
-      this.vm.removeGlobal("log");
+      if (this.session) {
+        this.session.removeGlobal("emit");
+        this.session.removeGlobal("on");
+        this.session.removeGlobal("log");
+        this.session.detach();
+      } else {
+        this.vm.removeGlobal("emit");
+        this.vm.removeGlobal("on");
+        this.vm.removeGlobal("log");
+      }
       this.vm = null;
     }
   }
