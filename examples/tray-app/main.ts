@@ -1,10 +1,10 @@
 import { PluginManager, loadPluginsFromDir, watchPluginsFromDir } from "../../mod.ts";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { runTray } from "./tray.ts";
 import type { EventBusPluginType, RawEvent } from "./plugins/event-bus.ts";
 
-function resolvePluginsDir(): string {
+function resolvePluginsDirCandidates(): string[] {
   const candidates: string[] = [];
 
   if (import.meta.dirname) {
@@ -24,9 +24,41 @@ function resolvePluginsDir(): string {
     candidates.push(path.join(process.cwd(), "plugins"));
   }
 
+  return [...new Set(candidates)];
+}
+
+/**
+ * Resolve the plugins directory.
+ *
+ * If an existing directory is found among the candidate locations it is
+ * returned as-is. Otherwise the most appropriate candidate is created
+ * (recursively) so the app can start with a plugins folder instead of crashing.
+ */
+function resolvePluginsDir(): string {
+  const candidates = resolvePluginsDirCandidates();
+
   for (const dir of candidates) {
     if (existsSync(dir)) {
       return dir;
+    }
+  }
+
+  // No existing plugins/ dir: create the best writable candidate.
+  // The compiled bunfs root (/$bunfs/...) is read-only, so prefer real-fs
+  // locations (next to the binary, then cwd). Try each in order and keep
+  // the first one we can actually create.
+  const creatable = [
+    ...candidates.filter((dir) => !dir.startsWith("/$bunfs/")),
+    ...candidates.filter((dir) => dir.startsWith("/$bunfs/")),
+  ];
+
+  for (const dir of creatable) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      console.warn(`[main] plugins/ not found — created directory: ${dir}`);
+      return dir;
+    } catch (err) {
+      console.warn(`[main] failed to create plugins/ dir at ${dir}:`, (err as Error).message);
     }
   }
 
@@ -216,7 +248,7 @@ async function main(): Promise<void> {
    process.on("SIGINT", shutdown);
    process.on("SIGTERM", shutdown);
 
-   await runTray(manager);
+    await runTray(manager, dirPath);
 }
 
 main();

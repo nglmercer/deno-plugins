@@ -13,7 +13,6 @@ import {
 import type { TrayIcon } from "tray-icon-node";
 import type { PluginManager } from "../../mod.ts";
 import { loadPluginsFromDir } from "../../mod.ts";
-import path from "node:path";
 
 // ---------------------------------------------------------------------------
 // Icon
@@ -59,6 +58,7 @@ let manager: PluginManager;
 let tray: TrayIcon | null = null;
 let menu: Menu | null = null;
 let isRunning = true;
+let pluginsDir = "./plugins";
 
 // ---------------------------------------------------------------------------
 // Menu builder (dynamic)
@@ -136,9 +136,7 @@ function tooltip(): string {
 // ---------------------------------------------------------------------------
 
 async function reloadPlugins(): Promise<void> {
-  const dirPath = import.meta.dirname
-    ? path.join(import.meta.dirname, "plugins")
-    : "./plugins";
+  const dirPath = pluginsDir;
 
   manager.shutdown();
 
@@ -215,10 +213,11 @@ function setupSignalHandlers(): void {
 // Main entry
 // ---------------------------------------------------------------------------
 
-export async function runTray(mgr: PluginManager): Promise<void> {
+export async function runTray(mgr: PluginManager, dir: string): Promise<void> {
   console.log("starting Tray");
 
   manager = mgr;
+  pluginsDir = dir;
   initialize();
 
   menu = buildMenu();

@@ -46,7 +46,7 @@
 
     "bun": ["bun@1.3.14", "", { "optionalDependencies": { "@oven/bun-darwin-aarch64": "1.3.14", "@oven/bun-darwin-x64": "1.3.14", "@oven/bun-darwin-x64-baseline": "1.3.14", "@oven/bun-freebsd-aarch64": "1.3.14", "@oven/bun-freebsd-x64": "1.3.14", "@oven/bun-linux-aarch64": "1.3.14", "@oven/bun-linux-aarch64-android": "1.3.14", "@oven/bun-linux-aarch64-musl": "1.3.14", "@oven/bun-linux-x64": "1.3.14", "@oven/bun-linux-x64-android": "1.3.14", "@oven/bun-linux-x64-baseline": "1.3.14", "@oven/bun-linux-x64-musl": "1.3.14", "@oven/bun-linux-x64-musl-baseline": "1.3.14", "@oven/bun-windows-aarch64": "1.3.14", "@oven/bun-windows-x64": "1.3.14", "@oven/bun-windows-x64-baseline": "1.3.14" }, "os": [ "!aix", "!sunos", "!openbsd", ], "cpu": [ "x64", "arm64", ], "bin": { "bun": "bin/bun.exe", "bunx": "bin/bunx.exe" } }, "sha512-aB6GVd42x1Y5ie1K16SF+oLGtgSkwX9hgoDdIW88pjvfTccU8F1vfpoOt34QLv0dZ1v3XimtaxPlZUG81Gx9Zg=="],
 
-    "napi-vm": ["napi-vm@0.1.2", "", {}, "sha512-TVEZD1fWkJG7BBMqWtSLkwIyaepofCer2Tuqqp8N0O39KGSiz1tir4VRlKEPq2bdc08++z+8GO2US+ZVSHDrBQ=="],
+    "napi-vm": ["napi-vm@0.1.2", "", {}, "sha512-Hc2VwLvVnWsTxtgfEdTF6qyd9apntS+NsBnnSBaA6cLnS2t6jDYkOyZks/YusVDjEU5Zd3P7uRGztXwuuai3GQ=="],
 
     "tray-icon-node": ["tray-icon-node@0.1.2", "", { "peerDependencies": { "bun": ">=1.0.0" } }, "sha512-A0aPUKkcI5RUDfo+vfOE6F4IgXnQVp3B5J9Dv5yjhWKoZpwBzAs1y8LveoyxYSW0kP8PjOfxQHKsUmD+eCe/xQ=="],
 
