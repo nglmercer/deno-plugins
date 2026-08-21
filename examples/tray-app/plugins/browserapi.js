@@ -351,7 +351,17 @@ async function getWebviewScriptPath() {
           return path2.join(currentDir, "..", "..", PATHS.TIKFINITY_WEBVIEW_TS);
       } catch (e) {}
       return "";
-    })()
+    })(),
+    (() => {
+      try {
+        const currentDir = path2.dirname(new URL(import.meta.url).pathname);
+        if (currentDir)
+          return path2.join(currentDir, "webview", scriptNameJs);
+      } catch (e) {}
+      return "";
+    })(),
+    `plugins/webview/${scriptNameJs}`,
+    `plugins/webview/${scriptName}`
   ].filter(Boolean);
   const foundPath = await findInRoots(candidates);
   if (foundPath) {
